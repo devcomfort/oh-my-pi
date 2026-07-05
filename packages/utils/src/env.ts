@@ -107,8 +107,11 @@ const agentEnv = parseEnvFile(path.join(getAgentDir(), ".env"));
 // can set PI_IGNORE_PROJECT_ENV=1 in ~/.omp/.env or ~/.env to skip the project .env.
 // Home, config, and agent .env files are still applied.
 // Bun auto-loads $PWD/.env before any JS runs; when ignoring, parse the file only
-// to learn which keys to strip from Bun.env.
-const ignoreProjectEnv = process.env.PI_IGNORE_PROJECT_ENV === "1";
+// to learn which keys to strip from Bun.env. The flag may live in process env or
+// in a home/config/agent .env file (parsed above before the project decision).
+const ignoreProjectEnv = [process.env.PI_IGNORE_PROJECT_ENV, homeEnv.PI_IGNORE_PROJECT_ENV, piEnv.PI_IGNORE_PROJECT_ENV, agentEnv.PI_IGNORE_PROJECT_ENV].some(
+	v => v === "1",
+);
 const projectEnvFile = parseEnvFile(path.join(process.cwd(), ".env"));
 const projectEnv = ignoreProjectEnv ? {} : projectEnvFile;
 
@@ -235,7 +238,7 @@ const TRUTHY: Dict<boolean> = {
 };
 /** True when `$PWD/.env` must not contribute keys (including Bun's pre-load). */
 export function isProjectEnvIgnored(): boolean {
-	return process.env.PI_IGNORE_PROJECT_ENV === "1";
+	return ignoreProjectEnv;
 }
 
 export function $flag(name: string, def: boolean = false): boolean {
