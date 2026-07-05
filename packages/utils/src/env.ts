@@ -106,13 +106,21 @@ const agentEnv = parseEnvFile(path.join(getAgentDir(), ".env"));
 // holding API keys for other tools (that omp should not auto-pick as providers)
 // can set PI_IGNORE_PROJECT_ENV=1 in ~/.omp/.env or ~/.env to skip the project .env.
 // Home, config, and agent .env files are still applied.
-const projectEnv = process.env.PI_IGNORE_PROJECT_ENV === "1"
-	? {}
-	: parseEnvFile(path.join(process.cwd(), ".env"));
+// Bun auto-loads $PWD/.env before any JS runs; when ignoring, parse the file only
+// to learn which keys to strip from Bun.env.
+const ignoreProjectEnv = process.env.PI_IGNORE_PROJECT_ENV === "1";
+const projectEnvFile = parseEnvFile(path.join(process.cwd(), ".env"));
+const projectEnv = ignoreProjectEnv ? {} : projectEnvFile;
 
 for (const key of Object.keys(Bun.env)) {
 	const value = Bun.env[key];
 	if (!isSafeEnvName(key) || isMacosMallocStackLoggingEnvName(key) || value === undefined || !isSafeEnvValue(value)) {
+		delete Bun.env[key];
+	}
+}
+
+if (ignoreProjectEnv) {
+	for (const key of Object.keys(projectEnvFile)) {
 		delete Bun.env[key];
 	}
 }
@@ -225,6 +233,11 @@ const TRUTHY: Dict<boolean> = {
 	ON: true,
 	on: true,
 };
+/** True when `$PWD/.env` must not contribute keys (including Bun's pre-load). */
+export function isProjectEnvIgnored(): boolean {
+	return process.env.PI_IGNORE_PROJECT_ENV === "1";
+}
+
 export function $flag(name: string, def: boolean = false): boolean {
 	const value = $env[name];
 	if (!value) return def;

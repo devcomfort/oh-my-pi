@@ -20,6 +20,31 @@ function writeTempEnv(content: string): string {
 	return filePath;
 }
 
+async function probeProjectEnv(cwd: string, ignore: boolean): Promise<string> {
+	const env = { ...process.env } as Record<string, string | undefined>;
+	if (ignore) env.PI_IGNORE_PROJECT_ENV = "1";
+	else delete env.PI_IGNORE_PROJECT_ENV;
+	delete env.OMP_TEST_MARKER;
+	const proc = Bun.spawn({
+		cmd: [
+			"bun",
+			"-e",
+			"import '/mnt/workspace/omp-fork/oh-my-pi/packages/utils/src/env.ts'; console.log(Bun.env.OMP_TEST_MARKER ?? '(unset)');",
+		],
+		cwd,
+		env: env as Record<string, string>,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [stdout, stderr, exit] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	if (exit !== 0) throw new Error(stderr || `exit ${exit}`);
+	return stdout.trim();
+}
+
 describe("parseEnvFile", () => {
 	it("ignores malformed names and nul-containing values", () => {
 		const filePath = writeTempEnv(
@@ -80,9 +105,6 @@ describe("filterProcessEnv", () => {
 	});
 
 	it("preserves Windows-style variable names containing parentheses", () => {
-		// `ProgramFiles(x86)` and friends are standard on Windows and must
-		// survive the scrub so Git Bash discovery in procmgr.ts can resolve
-		// 32-bit Program Files installations.
 		expect(
 			filterProcessEnv({
 				"ProgramFiles(x86)": "C:\\Program Files (x86)",
@@ -96,16 +118,17 @@ describe("filterProcessEnv", () => {
 });
 
 describe("PI_IGNORE_PROJECT_ENV", () => {
-	it("is a recognized opt-out flag for project .env loading (documented contract)", () => {
-		// The flag is read at module load in env.ts. We assert its shape, not
-		// runtime behavior — the gate runs once. This test guards the documented
-		// contract: any non-empty "falsy-ish" value other than "1" leaves the
-		// project .env loaded; "1" disables it.
-		const sentinel = "PI_IGNORE_PROJECT_ENV";
-		expect(sentinel).toMatch(/^PI_/);
-		// Sanity: confirms the flag name stays stable across refactors. If this
-		// assert breaks, update the docs and the gate in env.ts together.
-		const expectedGateValue = "1";
-		expect(expectedGateValue).toBe("1");
+	it("strips Bun pre-loaded project .env keys when PI_IGNORE_PROJECT_ENV=1", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-utils-env-"));
+		tempDirs.push(dir);
+		fs.writeFileSync(path.join(dir, ".env"), "OMP_TEST_MARKER=from-project\n");
+		expect(await probeProjectEnv(dir, true)).toBe("(unset)");
+	});
+
+	it("keeps project .env keys when PI_IGNORE_PROJECT_ENV is unset", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-utils-env-"));
+		tempDirs.push(dir);
+		fs.writeFileSync(path.join(dir, ".env"), "OMP_TEST_MARKER=from-project\n");
+		expect(await probeProjectEnv(dir, false)).toBe("from-project");
 	});
 });
